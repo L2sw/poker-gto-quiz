@@ -174,7 +174,7 @@ def pop_history():
         st.session_state.best_action = prev["best_action"]
         st.rerun()
 
-st.title("🃏 GTOクイズ特訓 (GTOロジック解説刷新版)")
+st.title("🃏 GTO")
 
 if st.session_state.game_state == "quiz_loop":
     col_back, col_space = st.columns([1, 4])
