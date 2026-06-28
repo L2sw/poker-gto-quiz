@@ -3,8 +3,7 @@ import random
 import pandas as pd
 import eval7
 
-# ページの設定
-st.set_page_config(page_title="GTO特訓ツール（ガチ仕様）", page_icon="🃏", layout="centered")
+st.set_page_config(page_title="GTO特訓ツール（完全版）", page_icon="🃏", layout="centered")
 
 POSITION_RULES = {
     "UTG": {"open": ["紺", "赤", "黄"]},
@@ -57,7 +56,6 @@ def determine_dynamic_ranges(hero_pos, villain_pos):
         return ALL_COLORS[ALL_COLORS.index(hero_open_colors[-1]):]
     return ALL_COLORS[min(len(ALL_COLORS) - 1, ALL_COLORS.index(hero_open_colors[-1]) + 1):]
 
-# ガチ仕様：iterations=10000 
 def run_simulation(hero_combos, villain_combos, board, iterations=10000):
     if not hero_combos or not villain_combos: return 0.5
     hero_wins, villain_wins, ties = 0, 0, 0
@@ -85,19 +83,55 @@ def is_hero_oop(hero_pos, villain_pos):
     order = ["SB", "BB", "UTG", "HJ", "CO", "BTN"]
     return order.index(hero_pos) < order.index(villain_pos)
 
+# --- 💡 全アクション対応：解説テキストマッピングデータベース ---
+def get_detailed_explanation(mode, action_idx, hand_eq, range_eq):
+    """すべての選択肢に対するポーカー数理に基づいたGTO理由を動的に生成"""
+    eq_p = hand_eq * 100
+    req_p = range_eq * 100
+    
+    if mode == "oop_p1": # 先攻第1決断
+        if action_idx == 1:
+            return f"【33%ベットを選択した場合】\n現在のハンド勝率 {eq_p:.1f}% / レンジ勝率 {req_p:.1f}%。マージナルな強さで薄くバリューを取りたい時、、またはハンド単体は弱くともレンジアドバンテージ（目安53%以上）を盾にプロテクション（相手の2オーバーカード等を降ろす）目的のC-BETとして33%の小サイズはGTO上極めて有効な防衛攻撃となります。"
+        elif action_idx == 2:
+            return f"【66%〜75%ベットを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。勝率が圧倒的に高く（目安68%以上）、ボードがウェット（ドローが多い）である場合、相手のコールレンジから最大の期待値（EV）を毟り取るために大きなサイズが正当化されます。逆に中途半端な手や超モンスターハンド（トラップを仕掛けるべき局面）での大ベットは、相手の弱い手をすべて降ろしてしまい、自分のEVを大きく損なう原因になります。"
+        elif action_idx == 3:
+            return f"【チェックを選択した場合】\n現在のハンド勝率 {eq_p:.1f}% / レンジ勝率 {req_p:.1f}%。先攻（OOP）は常にポジションの不利を背負っているため、ハンドやレンジの勝率が十分でない場合は『チェック』を高頻度で混ぜて防衛ラインを敷くのがナッシュ均衡の基本です。また、勝率が85%を超える無敵状態であれば、あえてチェックすることで相手に『ブラフや薄いベットを打たせる（インデュース）』という至高のトラップ戦略に昇華されます。"
+
+    elif mode == "oop_p2": # 先攻第2決断（チェック後、打たれた時）
+        if action_idx == 1:
+            return f"【フォールドを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。相手は連続してストリートを打ってきている（バレル）、またはボードテクスチャに対して強いレンジを持っています。自分のハンド勝率がポットオッズ（必要勝率）を下回っている場合、未練を残さず即座にフォールドするのが長期的な損失をゼロにする最善のGTOディフェンスです。"
+        elif action_idx == 2:
+            return f"【コールを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。自分の手は相手のガチガチのバリュー（超強手）には負けているかもしれませんが、相手のブラフレンジ（ブラフバレル）を捕まえるには十分な勝率（目安42%〜58%）を持っています。オッズに合うためコールして次のカード、あるいはショーダウンを目指す『ブラフキャッチャー』としての役割を果たします。"
+        elif action_idx == 3:
+            return f"【レイズを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。勝率が極めて高く（目安75%以上）、ナッツ級の手を隠し持っている（チェックトラップ成功時）場合、相手が自ら大きく打ってくれたこの瞬間こそが、相手のスタックを全額没収する最大のチャンスです。ここでコールに留めると大損失（バリューロス）になります。強烈なチェックレイズでポットを爆発させましょう。"
+
+    elif mode == "ip_p1": # 後攻ディフェンス（相手がベットしてきた）
+        if action_idx == 1:
+            return f"【フォールドを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。後攻（IP）の優位性があるとはいえ、相手のドンクベットや先攻100%バレルに対し、自分のハンドが完全にオッズ負けしています。無駄なチップを流さないための正しい撤退です。"
+        elif action_idx == 2:
+            return f"【コールを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。後攻の利（ポジション優位）を最大限に活かし、コールに留めることで次のストリートでも相手の出方（チェックか、さらなるベットか）をコントロールできます。中位の強さの手で広くコールを留めるのはGTOの定石です。"
+        elif action_idx == 3:
+            return f"【レイズを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。勝率75%以上のモンスターハンドであれば、後攻から即座に主導権を奪い返し、コミットメント（降りられない状態）に相手を追い込むためのレイズを返すのがバリュー最大化の正解となります。"
+
+    elif mode == "ip_p2": # 後攻アクション（相手がチェックしてきた）
+        if action_idx == 1:
+            return f"【33%ベットを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。相手のチェックにより弱みが露呈したのに対し、レンジ全体の優位性（目安50%以上）を使って薄くバリューを剥ぎ取る、あるいは相手のハイカード（AK等）をフォールドさせるピュアブラフとして機能します。"
+        elif action_idx == 2:
+            return f"【66%〜75%ベットを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。明確なバリューハンド（目安勝率64%以上）を保持しているため、チェックした相手のミドルペアやドローハンドに対して高額の通行料を要求し、ポットを効率的に大きくします。"
+        elif action_idx == 3:
+            return f"【チェックバックを選択した場合】\n現在のハンド勝率 {eq_p:.1f}%。特にリバーにおいては、中途半端な強さの手でベットしてレイズを返されるのが最悪のシナリオです。チェックバックで安全に無料のショーダウン（SDVの利確）を行い、勝利を確定させるのが鉄則です。"
+    return ""
+
 hand_to_color = load_ranges_from_csv()
 
-# セッション状態の安全初期化
 if "game_state" not in st.session_state:
     st.session_state.game_state = "setup"
-if "selected_pos" not in st.session_state:
-    st.session_state.selected_pos = "ランダム"
 if "quiz_phase" not in st.session_state:
-    st.session_state.quiz_phase = 1 # 1: 第1決断, 2: 相手の対抗に対する第2決断
+    st.session_state.quiz_phase = 1 
 if "quiz_answered" not in st.session_state:
     st.session_state.quiz_answered = False
 
-st.title("🃏 GTOクイズ特訓アプリ (ガチ仕様)")
+st.title("🃏 GTOクイズ特訓アプリ (AI最適化＆全解説版)")
 
 # --- 1. セットアップ画面 ---
 if st.session_state.game_state == "setup":
@@ -138,8 +172,7 @@ if st.session_state.game_state == "setup":
             "pot": 5.5,
             "street_history": {},
             "current_street": "flop",
-            "oop_action_taken": None,
-            "villain_action_text": ""
+            "oop_action_taken": None
         }
         st.session_state.game_state = "quiz_loop"
         st.session_state.quiz_phase = 1
@@ -152,7 +185,6 @@ elif st.session_state.game_state == "quiz_loop":
     street = data["current_street"]
     hero_oop = is_hero_oop(data["hero_pos"], data["villain_pos"])
     
-    # カードのストリート配布制御
     if street == "flop" and len(data["board"]) == 0:
         data["board"] = [data["deck"].pop() for _ in range(3)]
     elif street == "turn" and len(data["board"]) == 3:
@@ -173,7 +205,6 @@ elif st.session_state.game_state == "quiz_loop":
             
     st.info(f"📁 **現在のボード**: `{' '.join(data['board'])}`  |  💰 **ポット**: {data['pot']:.1f}bb")
     
-    # ガチ確率の計算 (モンテカルロ10000回)
     hero_single_combo = [[data['hero_hand_raw'][0:2], data['hero_hand_raw'][2:4]]]
     hero_range_combos = get_range_combos([data['hero_color']], hand_to_color)
     villain_range_combos = get_range_combos(data['villain_colors'], hand_to_color)
@@ -183,7 +214,6 @@ elif st.session_state.game_state == "quiz_loop":
         hand_eq = run_simulation(hero_single_combo, villain_range_combos, board_obj, iterations=10000)
         range_eq = run_simulation(hero_range_combos, villain_range_combos, board_obj, iterations=10000)
         
-    # PC版と同じ比率・勝率のダッシュボード表示
     c_eq1, c_eq2 = st.columns(2)
     c_eq1.metric(label="📊 あなたのハンド勝率", value=f"{hand_eq*100:.1f} %")
     c_eq2.metric(label="📈 レンジ全体の勝率", value=f"{range_eq*100:.1f} %")
@@ -195,9 +225,8 @@ elif st.session_state.game_state == "quiz_loop":
     # --- パターンA: 【先攻(OOP)】の処理群 ---
     if hero_oop:
         if st.session_state.quiz_phase == 1:
-            st.write("⚠️ あなたは**【先攻(OOP)】**です。最初にアクションを決めてしてください。")
+            st.write("⚠️ あなたは**【先攻(OOP)】**です。最初のアクションを決めてください。")
             
-            # GTO正解ロジック（PC版と完全一致）
             if street == "river":
                 best_act = 3 if (hand_eq >= 0.85 and hero_bet_count >= 1) else (3 if barrel_count > 0 else (2 if hand_eq >= 0.70 else (1 if hand_eq >= 0.58 else 3)))
             else:
@@ -212,29 +241,22 @@ elif st.session_state.game_state == "quiz_loop":
             
             if not st.session_state.quiz_answered:
                 if st.button("決断を確定する 🤝", use_container_width=True, key=f"btn_oop_p1_{street}"):
-                    if choice != best_act:
-                        st.error("❌ 不正解！レンジ特性、またはショーダウンバリュー(SDV)の保護の観点から最適ではありません。")
-                    else:
-                        st.session_state.quiz_answered = True
-                        st.success("✨ 【正解です！】")
-                        st.markdown("### 💡 【GTO戦略解説 (OOP / {})】".format(street.upper()))
-                        if best_act == 3 and hand_eq >= 0.85:
-                            st.info(f"➔ 【至高のトラップ（チェックインデュース）】勝率 {hand_eq*100:.1f}% の無敵のモンスターハンドです！ここで3発目のベットを打つと相手の引き締まったレンジ（QQ+やAK）は警戒して逃げてしまいます。あえてチェックして弱気を見せることで、相手のブラフや薄いバリューベットを強烈に誘い出す（インデュース）のがGTO最高EVのアクションです。")
-                        elif best_act == 2:
-                            st.info(f"➔ ハンド勝率が {hand_eq*100:.1f}% と圧倒的に高く、レンジも有利なため、相手のミドルペアやドローから最大限のバリューを回収すべき局面です（ラージベット）。")
-                        elif best_act == 1:
-                            if hand_eq >= 0.85:
-                                st.info(f"➔ 【コミットメント誘導のスモールベット】勝率 {hand_eq*100:.1f}% の超モンスターハンドですが、ボードがJのペアなどで相手のレンジ（赤・紺）を過剰に警戒させて逃がしてしまうリスクがあります。あえて33%と小さく打つことで、相手のQQやKK、ドローをズルズルとコールに巻き込むのが最適戦略となります。")
-                            elif hand_eq >= 0.56:
-                                st.info(f"➔ 勝率は十分（{hand_eq*100:.1f}%）ですが、ボードが危険、またはレンジがやや不利なため、マージナルバリュー（薄いバリュー）を狙って小さく打つのが最適です。")
-                            else:
-                                st.info(f"➔ あなたのハンド単体は弱いですが、レンジ全体の勝率が {range_eq*100:.1f}% と有利なため、先攻からレンジを盾にボードを支配する『プロテクション/ブラフCB』を仕掛けるのが効果的です。")
-                        elif best_act == 3:
-                            st.info(f"➔ ハンド勝率（{hand_eq*100:.1f}%）またはレンジ勝率（{range_eq*100:.1f}%）が不足しています。先攻（OOP）の不利を補うため、レンジ全体でチェック頻度を高め、防衛ラインに回るべき局面です。")
-                        st.rerun()
+                    st.session_state.quiz_answered = True
+                    st.session_state.is_correct = (choice == best_act)
+                    st.session_state.user_choice = choice
+                    st.session_state.best_action = best_act
+                    st.rerun()
             else:
+                if st.session_state.is_correct:
+                    st.success(f"✨ 【正解です！】最適アクション：{options[best_act-1]}")
+                else:
+                    st.error(f"❌ 【不正解！】あなたの選択：{options[choice-1]} (GTO推奨：{options[best_act-1]})")
+                
+                # 選んだアクションの具体的な理由を100%出力
+                st.markdown("### 💡 あなたが選んだ選択肢のアクション解説")
+                st.info(get_detailed_explanation("oop_p1", choice, hand_eq, range_eq))
+                
                 if choice in [1, 2]:
-                    # ベット成功時のルート
                     if st.button("相手のアクションを見る ➡️", use_container_width=True, key=f"btn_go_v1_{street}"):
                         bet_size = data["pot"] * (0.33 if choice == 1 else 0.70)
                         data["pot"] += (bet_size * 2)
@@ -243,7 +265,6 @@ elif st.session_state.game_state == "quiz_loop":
                         st.session_state.quiz_phase = "next_street_trigger"
                         st.rerun()
                 else:
-                    # チェックを選択して正解した後のルート
                     if st.button("チェック後に相手の対抗ベットを受ける ➡️", use_container_width=True, key=f"btn_go_v_bet_{street}"):
                         data["oop_action_taken"] = "check"
                         st.session_state.quiz_phase = 2
@@ -251,9 +272,10 @@ elif st.session_state.game_state == "quiz_loop":
                         st.rerun()
                         
         elif st.session_state.quiz_phase == 2:
-            villain_bet_size = 0.75 if (barrel_count >= 1 or hand_eq >= 0.85) else 0.66
+            # 【相手のAI最適化】Heroのレンジ勝率が低い時（=敵のレンジが強い時）は確実に高額ベット（75%）を仕掛けるように最適化
+            villain_bet_size = 0.75 if (barrel_count >= 1 or hand_eq >= 0.85 or range_eq < 0.45) else 0.66
             st.warning(f"🤖 【相手({data['villain_pos']})のアクション】")
-            st.write(f"あなたのチェックを受けて、相手はポットの {int(villain_bet_size*100)}% サイズで【ベット】してきました！")
+            st.write(f"あなたのチェックとレンジレンジ比率を見極め、相手はポットの {int(villain_bet_size*100)}% サイズで【最適化ベット】してきました！")
             st.markdown("### 【相手のベットに対するあなたの決断は？】")
             
             if street == "flop": best_def = 3 if hand_eq >= 0.75 else (2 if hand_eq >= 0.42 else 1)
@@ -266,26 +288,20 @@ elif st.session_state.game_state == "quiz_loop":
             
             if not st.session_state.quiz_answered:
                 if st.button("決断を確定する 🤝", use_container_width=True, key=f"btn_oop_p2_{street}"):
-                    if choice2 != best_def:
-                        if hand_eq >= 0.85:
-                            st.error("❌ 不正解！ここでコール（2番）を返すだけでは、せっかく誘い出した相手のスタック（残りのチップ）を全額お仕置きする機会を逃してしまいます（バリューの損失）。最強の手だからこそ、やるべきことは一つです！")
-                        else:
-                            st.error("❌ 不正解！相手のバレル頻度と、自分のハンドがただの『ブラフキャッチャー』に過ぎない点を考慮してください。")
-                    else:
-                        st.session_state.quiz_answered = True
-                        st.success("✨ 🎉 【大正解！】")
-                        st.markdown("### 💡 【GTOディフェンス解説 (OOP / {})】".format(street.upper()))
-                        if best_def == 3:
-                            if hand_eq >= 0.85:
-                                st.info(f"➔ 【チェックレイズ成功・全チップ回収】罠が完璧に決まりました！勝率 {hand_eq*100:.1f}% のナッツフルハウスを隠し持った状態から、相手の75%ベットに対して特大のレイズ（オールイン要求など）を返します。相手は自ら大きく賭けてしまったため、引くに引けず致命的な大損害を被ることになります。期待値(EV)最高のアクションです。")
-                            else:
-                                st.info(f"➔ ハンド勝率が {hand_eq*100:.1f}% と非常に高く、相手のライトバレル（ブラフ）を粉砕しつつ、バリューを最大化するためにチェックレイズを返すのが最適です。")
-                        elif best_def == 2:
-                            st.info(f"➔ 相手のベットサイズに対する必要勝率（オッズ）を、あなたのハンド勝率（{hand_eq*100:.1f}%）が上回っています。強い手には負けている可能性がありますが、相手のブラフをキャッチ（利確）するためにコールが義務付けられる『ブラフキャッチャー』の領域です。")
-                        elif best_def == 1:
-                            st.info(f"➔ 相手はストリートを連続して打ってきており、レンジがバリューに偏っています。あなたのハンド勝率（{hand_eq*100:.1f}%）ではポットオッズが合わないため、未練なくフォールドするのが長期的なEVを最大化します。")
-                        st.rerun()
+                    st.session_state.quiz_answered = True
+                    st.session_state.is_correct = (choice2 == best_def)
+                    st.session_state.user_choice = choice2
+                    st.session_state.best_action = best_def
+                    st.rerun()
             else:
+                if st.session_state.is_correct:
+                    st.success(f"✨ 🎉 【大正解！】最適アクション：{def_options[best_def-1]}")
+                else:
+                    st.error(f"❌ 【不正解！】あなたの選択：{def_options[choice2-1]} (GTO推奨：{def_options[best_def-1]})")
+                
+                st.markdown("### 💡 あなたが選んだ選択肢のアクション解説")
+                st.info(get_detailed_explanation("oop_p2", choice2, hand_eq, range_eq))
+                
                 if st.button("次のステップへ進む ➡️", use_container_width=True, key=f"btn_oop_p2_end_{street}"):
                     if choice2 == 2: data["pot"] += (data["pot"] * villain_bet_size * 2)
                     elif choice2 == 3: data["pot"] += (data["pot"] * villain_bet_size * 4)
@@ -294,12 +310,13 @@ elif st.session_state.game_state == "quiz_loop":
                     st.session_state.quiz_phase = "next_street_trigger"
                     st.rerun()
 
-    # --- パターンB: 【後攻(IP)】の処理群 ---
+# --- パターンB: 【後攻(IP)】の処理群 ---
     else:
-        villain_bets = range_eq < 0.44 and street != "river"
+        # 【相手のAI最適化】自分のレンジ勝率が56%未満かつリバー以外の場合、先攻の利を活かして確実に打ってくる（GTOドンク/CB最適化）
+        villain_bets = (range_eq < 0.46) and street != "river"
         
         if villain_bets:
-            st.warning(f"🤖 【相手({data['villain_pos']})のアクション】ポットの66%サイズで【ベット】してきました！")
+            st.warning(f"🤖 【相手({data['villain_pos']})のアクション】レンジアドバンテージを検知し、ポットの66%サイズで【最適化ベット】してきました！")
             st.markdown("### 【ベットされたあなた(IP)のアクションは？】")
             
             if hand_eq >= 0.75: best_ip_def = 3
@@ -312,17 +329,20 @@ elif st.session_state.game_state == "quiz_loop":
             
             if not st.session_state.quiz_answered:
                 if st.button("決断を確定する 🤝", use_container_width=True, key=f"btn_ip_p1_{street}"):
-                    if choice != best_ip_def:
-                        st.error("❌ 不正解！必要エキティが不足しているか、バリューレイズの機会を逃しています。")
-                    else:
-                        st.session_state.quiz_answered = True
-                        st.success("✨ 🎉 【大正解！】")
-                        st.markdown("### 💡 【GTOディフェンス解説 (IP / {})】".format(street.upper()))
-                        if best_ip_def == 3: st.info(f"➔ 後攻（IP）の有利さを活かし、勝率 {hand_eq*100:.1f}% のモンスターハンドで即座にレイズを返し、ポットを爆発させるべきです。")
-                        elif best_ip_def == 2: st.info(f"➔ 後攻（IP）であるため、コールするだけで次のストリートも相手の出方を見られるポジション優位があります。")
-                        elif best_ip_def == 1: st.info(f"➔ 相手の先攻ベットに対し、あなたのハンド勝率（{hand_eq*100:.1f}%）はオッズに見合いません。")
-                        st.rerun()
+                    st.session_state.quiz_answered = True
+                    st.session_state.is_correct = (choice == best_ip_def)
+                    st.session_state.user_choice = choice
+                    st.session_state.best_action = best_ip_def
+                    st.rerun()
             else:
+                if st.session_state.is_correct:
+                    st.success(f"✨ 🎉 【大正解！】最適アクション：{ip_def_opts[best_ip_def-1]}")
+                else:
+                    st.error(f"❌ 【不正解！】あなたの選択：{ip_def_opts[choice-1]} (GTO推奨：{ip_def_opts[best_ip_def-1]})")
+                
+                st.markdown("### 💡 あなたが選んだ選択肢のアクション解説")
+                st.info(get_detailed_explanation("ip_p1", choice, hand_eq, range_eq))
+                
                 if st.button("次のステップへ進む ➡️", use_container_width=True, key=f"btn_ip_p1_end_{street}"):
                     if choice == 2: data["pot"] += (data["pot"] * 0.66 * 2)
                     elif choice == 3: data["pot"] += (data["pot"] * 0.66 * 4)
@@ -332,7 +352,7 @@ elif st.session_state.game_state == "quiz_loop":
                     st.rerun()
                     
         else:
-            st.success(f"🤖 【相手({data['villain_pos']})のアクション】: 💤 【チェック】してきました。")
+            st.success(f"🤖 【相手({data['villain_pos']})のアクション】: 💤 レンジ均衡を保つため【チェック】してきました。")
             st.markdown("### 【チェックで回ってきたあなた(IP)のアクションは？】")
             
             if street == "river":
@@ -349,21 +369,20 @@ elif st.session_state.game_state == "quiz_loop":
             
             if not st.session_state.quiz_answered:
                 if st.button("決断を確定する 🤝", use_container_width=True, key=f"btn_ip_p2_{street}"):
-                    if choice != best_ip_act:
-                        st.error("❌ 不正解！『ベットして自分より弱い手がコールしてくれるか？』を深く考えてください。")
-                    else:
-                        st.session_state.quiz_answered = True
-                        st.success("✨ 🎉 【大正解！】")
-                        st.markdown("### 💡 【GTOアクション解説 (IP / {})】".format(street.upper()))
-                        if best_ip_act == 2: st.info(f"➔ 相手のチェックにより弱みが露呈しました。あなたの勝率 {hand_eq*100:.1f}% は明確なバリュー領域です。ポットを大きく膨らませて利益を最大化してください。")
-                        elif best_ip_act == 1:
-                            if hand_eq >= 0.54: st.info(f"➔ マージナルバリュー（薄いバリュー）です。小さなベットを打つことで、相手の『あなたよりさらに弱い手』からコールを引き出しつつ、プロテクション効果を最大化します。")
-                            else: st.info(f"➔ あなたのハンドは最弱（勝率 {hand_eq*100:.1f}%）ですが、レンジ全体（{range_eq*100:.1f}%）は有利です。『ピュアブラフベット』の局面です。")
-                        elif best_ip_act == 3:
-                            if street == "river": st.info(f"➔ 【超重要】リバーにおいて、あなたのハンド勝率（{hand_eq*100:.1f}%）は『ショーダウンバリュー（SDV）』の塊です。チェックバックを選択して安全に利確を掴み取るのがGTOの絶対原則です。")
-                            else: st.info(f"➔ 中途半端な強さ（勝率 {hand_eq*100:.1f}%）のハンドです。チェックバックを選択して無料で次のカードを見にいくのが最善です。")
-                        st.rerun()
+                    st.session_state.quiz_answered = True
+                    st.session_state.is_correct = (choice == best_ip_act)
+                    st.session_state.user_choice = choice
+                    st.session_state.best_action = best_ip_act
+                    st.rerun()
             else:
+                if st.session_state.is_correct:
+                    st.success(f"✨ 🎉 【大正解！】最適アクション：{ip_check_opts[best_ip_act-1]}")
+                else:
+                    st.error(f"❌ 【不正解！】あなたの選択：{ip_check_opts[choice-1]} (GTO推奨：{ip_check_opts[best_ip_act-1]})")
+                
+                st.markdown("### 💡 あなたが選んだ選択肢のアクション解説")
+                st.info(get_detailed_explanation("ip_p2", choice, hand_eq, range_eq))
+                
                 if st.button("次のステップへ進む ➡️", use_container_width=True, key=f"btn_ip_p2_end_{street}"):
                     action_taken = "check"
                     if choice in [1, 2]:
