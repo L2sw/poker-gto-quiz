@@ -1,4 +1,5 @@
-Cython==3.0.11
+setuptools
+Cython
 pandas
 streamlit
-eval7==0.1.10
+eval7
