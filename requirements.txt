@@ -1,4 +1,4 @@
-Cython
+Cython==3.0.11
 pandas
 streamlit
-eval7
+eval7==0.1.10
