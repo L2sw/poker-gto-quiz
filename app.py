@@ -81,7 +81,7 @@ def is_hero_oop(hero_pos, villain_pos):
     order = ["SB", "BB", "UTG", "HJ", "CO", "BTN"]
     return order.index(hero_pos) < order.index(villain_pos)
 
-# --- セッション状態の安全な初期化 ---
+# --- セッション状態の初期化 ---
 if "game_state" not in st.session_state:
     st.session_state.game_state = "setup"
 if "quiz_answered" not in st.session_state:
@@ -117,20 +117,18 @@ if st.session_state.game_state == "setup":
             "villain_colors": determine_dynamic_ranges(hero_pos, villain_pos),
             "deck": deck,
             "board": [],
-            "pot": 5.5,
-            "history": []
+            "pot": 5.5
         }
         st.session_state.game_state = "flop"
         st.session_state.quiz_answered = False
-        st.flush_removes() if hasattr(st, "flush_removes") else None
         st.rerun()
 
-# --- 2. クイズ画面 (Flop / Turn / River) ---
+# --- 2. クイズ画面 ---
 else:
     data = st.session_state.game_data
     street = st.session_state.game_state
     
-    # カードの配布ロジック（重複実行を防ぐためユニークキーで保護）
+    # カードの配布
     if street == "flop" and len(data["board"]) == 0:
         data["board"] = [data["deck"].pop() for _ in range(3)]
     elif street == "turn" and len(data["board"]) == 3:
@@ -138,10 +136,9 @@ else:
     elif street == "river" and len(data["board"]) == 4:
         data["board"].append(data["deck"].pop())
 
-    # 画面表示
     st.markdown(f"### ⚔️ シチュエーション: **{street.upper()}**")
     
-    # 完全に枠を分けることでDOMエラーを防止
+    # 固定枠を用意して描画ブレを防止
     with st.container(border=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -161,10 +158,7 @@ else:
     
     st.caption(f"📊 あなたの現在のハンド勝率: **{hand_eq*100:.1f}%**")
 
-    # クイズ解答のコンテナー化（JavaScriptのエラーを完全に防ぐキモ）
-    quiz_container = st.container()
-    
-    # 正解ロジック（簡易判定）
+    # 正解判定ロジック
     if hand_eq >= 0.85:
         best_action = 3 if street == "river" else 1
     elif hand_eq >= 0.65:
@@ -174,46 +168,42 @@ else:
     else:
         best_action = 3
 
+    # UI要素を固定（消去・出現の挙動をなくし、常に静的に配置する）
+    st.write("#### 👉 あなたのアクションを決めてください:")
+    
+    options = ["1: 小さくベットする (ポットの33%)", "2: 大きくベットする (ポットの75%)", "3: チェックする"]
+    ans = st.radio("選択肢:", options, key=f"radio_static_{street}")
+    user_choice = int(ans[0])
+    
+    # 決定ボタンと次のストリートボタンを別々に常設配置せず、1つのエリアで状態スイッチする
     if not st.session_state.quiz_answered:
-        with quiz_container:
-            st.write("#### 👉 あなたのアクションを決めてください:")
-            ans = st.radio(
-                "選択肢:", 
-                ["1: 小さくベットする (ポットの33%)", "2: 大きくベットする (ポットの75%)", "3: チェックする"], 
-                key=f"radio_{street}"
-            )
-            user_choice = int(ans[0])
-            
-            if st.button("決断を確定する 🤝", use_container_width=True, key=f"submit_{street}"):
-                st.session_state.quiz_answered = True
-                st.session_state.is_correct = (user_choice == best_action)
-                st.session_state.user_choice = user_choice
-                st.rerun()
-                
+        if st.button("決断を確定する 🤝", use_container_width=True, key=f"btn_submit_{street}"):
+            st.session_state.quiz_answered = True
+            st.session_state.is_correct = (user_choice == best_action)
+            st.session_state.user_choice = user_choice
+            st.rerun()
     else:
-        with quiz_container:
-            if st.session_state.is_correct:
-                st.success("✨ 【正解です！】")
-            else:
-                st.error("❌ 【不正解です！】最適戦略ではありません。")
-                
-            # 解説テキスト
-            if st.session_state.user_choice == 3 and hand_eq >= 0.85:
-                st.markdown("💡 **GTO解説**: 【至高のトラップ】圧倒的モンスターハンドです。ベットすると相手を逃がしてしまうため、チェックで相手のブラフや薄いバリューベットを強烈に誘い出すのがGTO最高EVになります。")
-            elif hand_eq >= 0.85:
-                st.markdown("💡 **GTO解説**: 【バリューの最大化】圧倒的な勝率を誇るモンスターハンドです。しっかりベットを打ってポットを構築していきましょう。")
-            else:
-                st.markdown(f"💡 **GTO解説**: ハンド勝率が {hand_eq*100:.1f}% の局面での標準的なマッピングアクションです。")
+        # 結果表示エリア（DOMに影響を与えないプレースホルダー表記）
+        if st.session_state.is_correct:
+            st.success("✨ 【正解です！】")
+        else:
+            st.error("❌ 【不正解です！】最適戦略ではありません。")
+            
+        if st.session_state.user_choice == 3 and hand_eq >= 0.85:
+            st.markdown("💡 **GTO解説**: 【至高のトラップ】圧倒的モンスターハンドです。ベットすると相手を逃がしてしまうため、チェックで相手のブラフや薄いバリューベットを強烈に誘い出すのがGTO最高EVになります。")
+        elif hand_eq >= 0.85:
+            st.markdown("💡 **GTO解説**: 【バリューの最大化】圧倒的な勝率を誇るモンスターハンドです。しっかりベットを打ってポットを構築していきましょう。")
+        else:
+            st.markdown(f"💡 **GTO解説**: ハンド勝率が {hand_eq*100:.1f}% の局面での標準的なアクション選択です。")
 
-            if st.button("次のストリートへ進む ➡️", use_container_width=True, key=f"next_{street}"):
-                st.session_state.quiz_answered = False
-                if street == "flop":
-                    data["pot"] += 4.0
-                    st.session_state.game_state = "turn"
-                elif street == "turn":
-                    data["pot"] += 10.0
-                    st.session_state.game_state = "river"
-                else:
-                    st.toast("ナイスゲーム！👏")
-                    st.session_state.game_state = "setup"
-                st.rerun()
+        if st.button("次のストリートへ進む ➡️", use_container_width=True, key=f"btn_next_{street}"):
+            st.session_state.quiz_answered = False
+            if street == "flop":
+                data["pot"] += 4.0
+                st.session_state.game_state = "turn"
+            elif street == "turn":
+                data["pot"] += 10.0
+                st.session_state.game_state = "river"
+            else:
+                st.session_state.game_state = "setup"
+            st.rerun()
