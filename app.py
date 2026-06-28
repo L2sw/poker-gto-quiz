@@ -177,7 +177,7 @@ def pop_history():
         st.session_state.best_action = prev["best_action"]
         st.rerun()
 
-st.title("🃏 GTOクイズ特訓アプリ (ディープ数理＆巻き戻し版)")
+st.title("🃏 GTO究極")
 
 # 常時上部に「1手戻る」ボタンを表示（戻れる履歴がある場合のみ活性化）
 if st.session_state.game_state == "quiz_loop":
