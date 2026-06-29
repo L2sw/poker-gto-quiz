@@ -17,10 +17,12 @@ POSITION_OPEN_MIN_COLOR = {
     "HJ":  "水色",
     "CO":  "白",
     "BTN": "グレー＋紫枠",
+    "SB":  "グレー＋紫枠",
+    "BB":  "白"
 }
 
-FULL_POSITIONS_ORDER = ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"]
-QUIZ_ELIGIBLE_POSITIONS = ["UTG", "LJ", "HJ", "CO", "BTN", "BB"]
+# ポストフロップでのアクション順（左ほど先攻/OOP、右ほど後攻/IP）
+POSTFLOP_ORDER = ["SB", "BB", "UTG", "LJ", "HJ", "CO", "BTN"]
 
 @st.cache_data
 def load_ranges_from_csv(csv_path="poker_range_list.csv"):
@@ -28,7 +30,6 @@ def load_ranges_from_csv(csv_path="poker_range_list.csv"):
         df = pd.read_csv(csv_path)
         return dict(zip(df['hand'], df['color']))
     except:
-        # 万が一CSVが読み込めない場合のフォールバック
         return {"AA": "紺", "AKo": "赤", "AQs": "赤", "AKs": "紺", "76s": "白"}
 
 def convert_to_concrete_cards(hand_str):
@@ -59,9 +60,7 @@ def get_range_combos(target_colors, hand_to_color):
     return all_combos
 
 def is_hero_oop(hero_pos, villain_pos):
-    # ポストフロップでのアクション順（BBが先攻、BTNが最後攻）
-    order_postflop = ["BB", "UTG", "LJ", "HJ", "CO", "BTN"]
-    return order_postflop.index(hero_pos) < order_postflop.index(villain_pos)
+    return POSTFLOP_ORDER.index(hero_pos) < POSTFLOP_ORDER.index(villain_pos)
 
 def run_simulation(hero_combos, villain_combos, board, iterations=3000):
     if not hero_combos or not villain_combos: 
@@ -158,49 +157,58 @@ def pop_history():
         st.session_state.game_data = prev["game_data"]
         st.session_state.quiz_phase = prev["quiz_phase"]
         st.session_state.quiz_answered = prev["quiz_answered"]
-        st.session_state.is_correct = prev["is_correct"]
-        st.session_state.user_choice = prev["user_choice"]
-        st.session_state.best_action = prev["best_action"]
+        st.is_correct = prev["is_correct"]
+        st.user_choice = prev["user_choice"]
+        st.best_action = prev["best_action"]
         st.rerun()
 
-# --- タイトルを完全に隠し、1手戻るボタンを配置 ---
 if st.session_state.game_state == "quiz_loop":
     if st.button("↩️ 1手戻る", disabled=(len(st.session_state.history_stack) == 0)):
         pop_history()
 
-# --- 2. 最初のアクション（セットアップ画面） ---
+# --- 2. セットアップ画面 ---
 if st.session_state.game_state == "setup":
     st.session_state.history_stack = []
     pos_choice = st.selectbox(
         "Heroのポジションを選択してください:", 
-        ["ランダム", "UTG", "LJ", "HJ", "CO", "BTN", "BB"],
+        ["ランダム", "UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"],
         key="pos_select"
     )
     
     if st.button("ゲームスタート 🚀", use_container_width=True, key="start_btn"):
-        clean_choice = pos_choice.split(" ")[0]
-        hero_pos = random.choice(QUIZ_ELIGIBLE_POSITIONS) if clean_choice == "ランダム" else clean_choice
-        hero_idx_full = FULL_POSITIONS_ORDER.index(hero_pos)
+        # ポジション決定ロジックの改善（偏りを完全に解消）
+        all_positions = ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"]
         
-        # プリフロップのシチュエーション生成
-        if hero_pos == "UTG":
-            villain_pos = "BB"
-            v_min_color = "白" 
-            h_min_color = POSITION_OPEN_MIN_COLOR["UTG"]
-            hero_allowed_colors = ALL_COLORS[ALL_COLORS.index(h_min_color):]
-            villain_colors = ALL_COLORS[ALL_COLORS.index("白"):]
-            preflop_summary = f"あなた({hero_pos})のオープンレイズに対し、{villain_pos} がディフェンス（コール）しました。"
+        if pos_choice == "ランダム":
+            hero_pos = random.choice(all_positions)
         else:
-            available_villains = [p for p in FULL_POSITIONS_ORDER[:hero_idx_full] if p in QUIZ_ELIGIBLE_POSITIONS]
-            villain_pos = random.choice(available_villains) if available_villains else "UTG"
-            v_min_color = POSITION_OPEN_MIN_COLOR[villain_pos]
-            v_min_idx = ALL_COLORS.index(v_min_color)
-            villain_colors = ALL_COLORS[v_min_idx:]
-            hero_allowed_colors = ALL_COLORS[v_min_idx + 1:]
-            preflop_summary = f"{villain_pos} のオープンレイズに対し、あなた({hero_pos})がコールして参加しました。"
+            hero_pos = pos_choice
+            
+        # 相手のポジションを偏りなく決定（Hero以外のポジションからランダムに選出）
+        remaining_positions = [p for p in all_positions if p != hero_pos]
+        villain_pos = random.choice(remaining_positions)
+        
+        # どちらがプリフロップのオリジナルレイザー（オープン側）かを位置関係からシミュレート
+        # ポストフロップでIP側（後ろの位置）がオープンしてOOPにコールされた、またはその逆をきれいにマッピング
+        if POSTFLOP_ORDER.index(hero_pos) > POSTFLOP_ORDER.index(villain_pos):
+            # HeroがIP、VillainがOOP -> Villainがオープン、Heroがコール
+            opener, caller = villain_pos, hero_pos
+            preflop_summary = f"{villain_pos} のオープンレイズに対し、あなた({hero_pos})がコールして参加しました（あなたがIP）。"
+        else:
+            # HeroがOOP、VillainがIP -> Heroがオープン、Villainがコール
+            opener, caller = hero_pos, villain_pos
+            preflop_summary = f"あなた({hero_pos})のオープンレイズに対し、{villain_pos} がコールして参加しました（あなたがOOP）。"
+            
+        opener_min_color = POSITION_OPEN_MIN_COLOR[opener]
+        opener_colors = ALL_COLORS[ALL_COLORS.index(opener_min_color):]
+        caller_colors = ALL_COLORS[ALL_COLORS.index("白"):] # コールレンジは広く設定
+        
+        hero_colors = opener_colors if hero_pos == opener else caller_colors
+        villain_colors = opener_colors if villain_pos == opener else caller_colors
+        v_min_color = POSITION_OPEN_MIN_COLOR[villain_pos] if villain_pos == opener else "白(全レンジ)"
 
         # Heroのハンドを決定
-        valid_hand_formats = [h for h, c in hand_to_color.items() if c in hero_allowed_colors]
+        valid_hand_formats = [h for h, c in hand_to_color.items() if c in hero_colors]
         if not valid_hand_formats: 
             valid_hand_formats = ["AA", "KK", "QQ", "AKs"]
         chosen_hand_format = random.choice(valid_hand_formats)
@@ -208,7 +216,7 @@ if st.session_state.game_state == "setup":
         hero_hand_raw = f"{hero_hand_pair[0]}{hero_hand_pair[1]}"
         hero_color = hand_to_color.get(chosen_hand_format, "紺")
         
-        # 【最善のGTO戦略ロジック】Villainも自身のレンジから「具体的な隠しハンド」を1つ引いて完全に固定
+        # Villainの隠しハンドを決定
         v_all_possible_combos = get_range_combos(villain_colors, hand_to_color)
         v_valid_combos = [c for c in v_all_possible_combos if c[0] not in hero_hand_pair and c[1] not in hero_hand_pair]
         if not v_valid_combos: 
@@ -244,7 +252,6 @@ elif st.session_state.game_state == "quiz_loop":
     street = data["current_street"]
     hero_oop = is_hero_oop(data["hero_pos"], data["villain_pos"])
     
-    # ストリートごとのカード配布
     if street == "flop" and len(data["board"]) == 0:
         data["board"] = [data["deck"].pop() for _ in range(3)]
     elif street == "turn" and len(data["board"]) == 3:
@@ -253,15 +260,18 @@ elif st.session_state.game_state == "quiz_loop":
         data["board"].append(data["deck"].pop())
         
     st.markdown(f"### ⚔️ {street.upper()} (現在のポット: {data['pot']:.1f}bb)")
-    st.caption(f"状況: {data['preflop_summary']} | コミュニティボード: `{' '.join(data['board'])}`")
+    st.caption(f"状況: {data['preflop_summary']}")
+    
+    # 【視認性改善】コミュニティカードを圧倒的に見やすく大きく表示するHTMLスタイル
+    board_html = "".join([f"<span style='font-size: 34px; font-weight: bold; background-color: #262730; padding: 4px 12px; border-radius: 5px; margin-right: 8px; border: 1px solid #464646;'>{c}</span>" for c in data["board"]])
+    st.markdown(f"<div style='margin: 15px 0;'>コミュニティボード: &nbsp;&nbsp;{board_html}</div>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"**😇 Hero ({data['hero_pos']})**: `{data['hero_hand_raw']}` | 位置: `{'OOP(先攻)' if hero_oop else 'IP(後攻)'}`")
+        st.markdown(f"**😇 Hero ({data['hero_pos']})**: <span style='font-size: 20px; font-weight: bold; color: #1E90FF;'>{data['hero_hand_raw']}</span> | 位置: `{'OOP(先攻)' if hero_oop else 'IP(後攻)'}`", unsafe_allow_html=True)
     with col2:
-        st.markdown(f"**🤖 Villain ({data['villain_pos']})**: `[??]` (レンジ基準: 【{data['v_min_color']}】以上)")
+        st.markdown(f"**🤖 Villain ({data['villain_pos']})**: `<span style='font-size: 18px; font-weight: bold; color: #FF4500;'>[??]</span>` (レンジ基準: 【{data['v_min_color']}】以上)", unsafe_allow_html=True)
         
-    # シミュレーション用コンボ定義
     hero_single_combo = [[data['hero_hand_raw'][0:2], data['hero_hand_raw'][2:4]]]
     villain_single_combo = [[data['villain_hand_raw'][0:2], data['villain_hand_raw'][2:4]]]
     
@@ -269,7 +279,6 @@ elif st.session_state.game_state == "quiz_loop":
     villain_range_combos = get_range_combos(data['villain_colors'], hand_to_color)
     board_obj = [eval7.Card(c) for c in data['board']]
     
-    # リアルタイム多角GTO勝率計算
     hand_eq = run_simulation(hero_single_combo, villain_range_combos, board_obj, iterations=3000)
     range_eq = run_simulation(hero_range_combos, villain_range_combos, board_obj, iterations=3000)
     villain_hand_eq = run_simulation(villain_single_combo, hero_range_combos, board_obj, iterations=3000)
@@ -281,7 +290,6 @@ elif st.session_state.game_state == "quiz_loop":
     if hero_oop:
         if st.session_state.quiz_phase == 1:
             st.write("👉 先攻です。最初のアクションを選択してください:")
-            # 勝率に応じたGTO推奨（強いハンドならバリューベット、弱ければチェック）
             best_act = 3 if hand_eq < 0.55 else (2 if hand_eq >= 0.72 else 1)
             
             options = ["1: ベット (ポットの33%)", "2: ベット (ポットの70%)", "3: チェック (Check)"]
@@ -297,10 +305,8 @@ elif st.session_state.game_state == "quiz_loop":
                     st.session_state.best_action = best_act
                     st.rerun()
             else:
-                if st.session_state.is_correct: 
-                    st.success("🎉 正解です！GTO的に最適なラインです。")
-                else: 
-                    st.error(f"❌ 不正解です (GTO推奨アクション: {options[best_act-1]})")
+                if st.session_state.is_correct: st.success("🎉 正解です！GTO的に最適なラインです。")
+                else: st.error(f"❌ 不正解です (GTO推奨アクション: {options[best_act-1]})")
                 st.info(generate_deep_mathematical_explanation("OOP・第1アクション", choice, best_act, hand_eq, range_eq, data["pot"]))
 
                 if choice in [1, 2]:
@@ -308,7 +314,6 @@ elif st.session_state.game_state == "quiz_loop":
                         save_to_history()
                         bet_size = data["pot"] * (0.33 if choice == 1 else 0.70)
                         
-                        # 【相手(Villain)の最善GTO防衛】自分の隠しハンド勝率がオッズに見合わなければリアルにFoldする
                         if villain_hand_eq >= 0.42:
                             data["pot"] += (bet_size * 2)
                             st.session_state.quiz_answered = False
@@ -325,7 +330,6 @@ elif st.session_state.game_state == "quiz_loop":
                         st.rerun()
                         
         elif st.session_state.quiz_phase == 2:
-            # 相手（後攻）が隠しハンドの強さに応じてベット・チェックを最適化
             v_bet_pct = 0.70 if villain_hand_eq >= 0.65 else (0.33 if villain_hand_eq < 0.25 and range_eq < 0.47 else 0.0)
             
             if v_bet_pct == 0.0:
@@ -336,10 +340,9 @@ elif st.session_state.game_state == "quiz_loop":
             else:
                 st.warning(f"🤖 相手がポットの {int(v_bet_pct*100)}% サイズでベットしてきました！")
                 
-                # 【フォールド実装】相手のベットサイズに対し、オッズに勝率が見合わない場合は「Fold」が正解
                 pot_odds = v_bet_pct / (1 + 2 * v_bet_pct)
                 if hand_eq < pot_odds:
-                    best_def = 1  # Foldが絶対正解
+                    best_def = 1  # Fold
                 elif hand_eq >= 0.74:
                     best_def = 3  # Raise
                 else:
@@ -358,10 +361,8 @@ elif st.session_state.game_state == "quiz_loop":
                         st.session_state.best_action = best_def
                         st.rerun()
                 else:
-                    if st.session_state.is_correct: 
-                        st.success("🎉 正解です！確率に基づいた見事なフォールド/コール判断です。")
-                    else: 
-                        st.error(f"❌ 不正解です (GTO推奨アクション: {def_options[best_def-1]})")
+                    if st.session_state.is_correct: st.success("🎉 正解です！確率に基づいた見事なフォールド/コール判断です。")
+                    else: st.error(f"❌ 不正解です (GTO推奨アクション: {def_options[best_def-1]})")
                     st.info(generate_deep_mathematical_explanation("OOP・防衛フェーズ", choice2, best_def, hand_eq, range_eq, data["pot"]))
                     
                     if choice2 == 1:
@@ -380,13 +381,11 @@ elif st.session_state.game_state == "quiz_loop":
 
     # --- 【IP (後攻) 時のロジック】 ---
     else:
-        # Villain(先攻)が自身の隠しハンドの勝率ベースでドンクベットしてくるか判定
         villain_donk = (villain_hand_eq >= 0.70 and range_eq < 0.45 and street != "river")
         
         if villain_donk:
             st.warning("🤖 相手(Villain)が先攻からドンクベット(ポットの66%)を仕掛けてきました！")
             
-            # ドンクに対しHeroのハンド勝率が低ければ「Fold」が正解
             if hand_eq < 0.33: 
                 best_ip_def = 1  # Fold
             elif hand_eq >= 0.72: 
@@ -407,10 +406,8 @@ elif st.session_state.game_state == "quiz_loop":
                     st.session_state.best_action = best_ip_def
                     st.rerun()
             else:
-                if st.session_state.is_correct: 
-                    st.success("🎉 正解です！")
-                else: 
-                    st.error(f"❌ 不正解です (GTO推奨: {ip_def_opts[best_ip_def-1]})")
+                if st.session_state.is_correct: st.success("🎉 正解です！")
+                else: st.error(f"❌ 不正解です (GTO推奨: {ip_def_opts[best_ip_def-1]})")
                 
                 if choice == 1:
                     st.error("フォールドを選択したためゲーム終了です。")
@@ -442,16 +439,13 @@ elif st.session_state.game_state == "quiz_loop":
                     st.session_state.best_action = best_ip_act
                     st.rerun()
             else:
-                if st.session_state.is_correct: 
-                    st.success("🎉 正解です！")
-                else: 
-                    st.error(f"❌ 不正解です (GTO推奨: {ip_check_opts[best_ip_act-1]})")
+                if st.session_state.is_correct: st.success("🎉 正解です！")
+                else: st.error(f"❌ 不正解です (GTO推奨: {ip_check_opts[best_ip_act-1]})")
                 
                 if st.button("相手の対抗結果を確認して次へ進む ➡️"):
                     save_to_history()
                     if choice in [1, 2]:
                         bet_size = data["pot"] * (0.33 if choice == 1 else 0.70)
-                        # あなたのベットに対し、Villainが勝率計算のオッズに基づいてディフェンスコールするか判定
                         if villain_hand_eq >= (0.36 if choice == 1 else 0.48):
                             data["pot"] += (bet_size * 2)
                         else:
@@ -473,13 +467,11 @@ elif st.session_state.game_state == "quiz_loop":
             st.session_state.quiz_phase = 1
             st.rerun()
         else:
-            # リバーまで全て耐えきり、フォールドされなかった場合の最後のショーダウン処理
             st.balloons()
             st.markdown("### 🏆 ショーダウン（リバー完了）")
             st.subheader(f"最終獲得ポット: {data['pot']:.1f}bb")
             st.info(f"🔍 **相手（Villain）が実際に最後まで隠し持っていたハンド: 【 {data['villain_hand_raw']} 】**")
             
-            # 勝敗の最終評価
             h_score = eval7.evaluate([eval7.Card(c) for c in [data['hero_hand_raw'][0:2], data['hero_hand_raw'][2:4]]] + board_obj)
             v_score = eval7.evaluate([eval7.Card(c) for c in [data['villain_hand_raw'][0:2], data['villain_hand_raw'][2:4]]] + board_obj)
             if h_score > v_score:
