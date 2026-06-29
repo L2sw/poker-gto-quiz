@@ -14,7 +14,8 @@ POSITION_OPEN_MIN_COLOR = {
     "UTG": "黄", "LJ":  "緑", "HJ":  "水色", "CO":  "白", "BTN": "グレー＋紫枠", "SB":  "グレー＋紫枠", "BB":  "白"
 }
 
-# ポストフロップでのアクション順（左ほど先攻/OOP、右ほど後攻/IP）
+# 【修正】プリフロップとポストフロップの順序を完全に分離
+PREFLOP_ORDER = ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"]
 POSTFLOP_ORDER = ["SB", "BB", "UTG", "LJ", "HJ", "CO", "BTN"]
 
 @st.cache_data
@@ -172,12 +173,17 @@ if st.session_state.game_state == "setup":
         remaining_positions = [p for p in all_positions if p != hero_pos]
         villain_pos = random.choice(remaining_positions)
         
-        if POSTFLOP_ORDER.index(hero_pos) > POSTFLOP_ORDER.index(villain_pos):
-            opener, caller = villain_pos, hero_pos
-            preflop_summary = f"{villain_pos} のオープンレイズに対し、あなた({hero_pos})がコールして参加しました（あなたがIP）。"
-        else:
+        # 【修正】PREFLOP_ORDER を使って誰がプリフロップのオリジナルレイザー（Opener）かを厳密に判定
+        if PREFLOP_ORDER.index(hero_pos) < PREFLOP_ORDER.index(villain_pos):
             opener, caller = hero_pos, villain_pos
-            preflop_summary = f"あなた({hero_pos})のオープンレイズに対し、{villain_pos} がコールして参加しました（あなたがOOP）。"
+            hero_oop = is_hero_oop(hero_pos, villain_pos)
+            pos_text = "あなたがOOP(先攻)" if hero_oop else "あなたがIP(後攻)"
+            preflop_summary = f"あなた({hero_pos})のオープンレイズに対し、{villain_pos} がコールして参加しました（ポストフロップでは {pos_text}）。"
+        else:
+            opener, caller = villain_pos, hero_pos
+            hero_oop = is_hero_oop(hero_pos, villain_pos)
+            pos_text = "あなたがOOP(先攻)" if hero_oop else "あなたがIP(後攻)"
+            preflop_summary = f"{villain_pos} のオープンレイズに対し、あなた({hero_pos})がコールして参加しました（ポストフロップでは {pos_text}）。"
             
         opener_min_color = POSITION_OPEN_MIN_COLOR[opener]
         opener_colors = ALL_COLORS[ALL_COLORS.index(opener_min_color):]
@@ -222,7 +228,7 @@ if st.session_state.game_state == "setup":
         st.session_state.quiz_answered = False
         st.rerun()
 
-# --- 3. 相手フォールド時の専用終了画面（進行バグ修正） ---
+# --- 3. 相手フォールド時の専用終了画面 ---
 elif st.session_state.game_state == "villain_folded":
     data = st.session_state.game_data
     st.markdown(f"### ⚔️ {data['current_street'].upper()} (ゲーム終了)")
@@ -299,8 +305,6 @@ elif st.session_state.game_state == "quiz_loop":
                     if st.button("相手(Villain)の対抗判断を受ける ➡️"):
                         save_to_history()
                         bet_size = data["pot"] * (0.33 if choice == 1 else 0.70)
-                        
-                        # 相手のコールに必要な勝率をオッズ計算
                         odds_required = 0.33 / (1 + 2 * 0.33) if choice == 1 else 0.70 / (1 + 2 * 0.70)
                         if villain_hand_eq >= odds_required:
                             data["pot"] += (bet_size * 2)
@@ -330,9 +334,9 @@ elif st.session_state.game_state == "quiz_loop":
                 st.warning(f"🤖 相手がポットの {int(v_bet_pct*100)}% サイズでベットしてきました！")
                 
                 pot_odds = v_bet_pct / (1 + 2 * v_bet_pct)
-                if hand_eq < pot_odds: best_def = 1  # Fold
-                elif hand_eq >= 0.74: best_def = 3   # Raise
-                else: best_def = 2                   # Call
+                if hand_eq < pot_odds: best_def = 1
+                elif hand_eq >= 0.74: best_def = 3
+                else: best_def = 2
                     
                 def_options = ["1: フォールド (Fold)", "2: コール (Call)", "3: レイズ (Raise)"]
                 ans2 = st.radio("ディフェンスの選択:", def_options, key=f"oop_p2_{street}", label_visibility="collapsed")
@@ -352,7 +356,7 @@ elif st.session_state.game_state == "quiz_loop":
                     st.info(generate_deep_mathematical_explanation("OOP・防衛フェーズ", choice2, best_def, hand_eq, range_eq, data["pot"]))
                     
                     if choice2 == 1:
-                        st.error("フォールドしたためゲーム終了です。チップを失うリスクを回避しました。")
+                        st.error("フォールドしたためゲーム終了です。")
                         if st.button("新しいゲームを始める 🔄", use_container_width=True):
                             st.session_state.game_state = "setup"
                             st.rerun()
@@ -367,17 +371,15 @@ elif st.session_state.game_state == "quiz_loop":
 
     # --- 【IP (後攻) 時のロジック】 ---
     else:
-        # 相手がドンクベット（先攻からベット）してくる基準
         villain_donk = (villain_hand_eq >= 0.70 and range_eq < 0.45 and street != "river")
         
         if villain_donk:
             st.warning("🤖 相手(Villain)が先攻からドンクベット(ポットの66%)を仕掛けてきました！")
             
-            # 【動的オッズ計算修正】66%ベットに対するオッズ計算
-            donk_odds = 0.66 / (1 + 2 * 0.66) # 28.4%
-            if hand_eq < donk_odds: best_ip_def = 1   # Fold
-            elif hand_eq >= 0.72: best_ip_def = 3     # Raise
-            else: best_ip_def = 2                     # Call
+            donk_odds = 0.66 / (1 + 2 * 0.66)
+            if hand_eq < donk_odds: best_ip_def = 1
+            elif hand_eq >= 0.72: best_ip_def = 3
+            else: best_ip_def = 2
             
             ip_def_opts = ["1: フォールド (Fold)", "2: コール (Call)", "3: レイズ (Raise)"]
             ans_ip1 = st.radio("対応選択:", ip_def_opts, key=f"ip_p1_bet_{street}", label_visibility="collapsed")
@@ -430,20 +432,19 @@ elif st.session_state.game_state == "quiz_loop":
                 
                 if st.button("相手の対抗結果を確認して次へ進む ➡️"):
                     save_to_history()
+                    # 【重要修正】IP（後攻）から次へ進む際、次のストリートでクイズが「回答済み」のまま固まるバグを完全解消
+                    st.session_state.quiz_answered = False 
+                    
                     if choice in [1, 2]:
                         bet_size = data["pot"] * (0.33 if choice == 1 else 0.70)
                         odds_required = 0.33 / (1 + 2 * 0.33) if choice == 1 else 0.70 / (1 + 2 * 0.70)
                         
                         if villain_hand_eq >= odds_required:
                             data["pot"] += (bet_size * 2)
-                            st.session_state.quiz_answered = False
                             st.session_state.quiz_phase = "next_street_trigger"
                         else:
                             st.session_state.game_state = "villain_folded"
-                            st.session_state.quiz_answered = False
                     else:
-                        # チェックバック時はそのストリートが終了
-                        st.session_state.quiz_answered = False
                         st.session_state.quiz_phase = "next_street_trigger"
                     st.rerun()
 
@@ -458,7 +459,6 @@ elif st.session_state.game_state == "quiz_loop":
             st.session_state.quiz_phase = 1
             st.rerun()
         else:
-            # リバー完了時の最終処理（ショーダウン移行）
             st.balloons()
             st.markdown("### 🏆 ショーダウン（リバー完了）")
             st.subheader(f"最終獲得ポット: {data['pot']:.1f}bb")
