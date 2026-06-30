@@ -4,9 +4,9 @@ import eval7
 import random
 
 # 画面設定
-st.set_page_config(page_title="GTO Precision Engine v6.0", page_icon="🧬", layout="wide")
+st.set_page_config(page_title="GTO Precision Engine v6.1", page_icon="🧬", layout="wide")
 
-# --- 1. 色の階層定義とポジション固定 ---
+# --- 1. 定義クラスとデータロード ---
 ALL_COLORS = ["グレー", "薄ピンク", "グレー＋紫枠", "白", "水色", "緑", "黄", "赤", "紺"]
 PREFLOP_ORDER = ["UTG", "LJ", "HJ", "CO", "BTN", "SB", "BB"]
 POSTFLOP_ORDER = ["SB", "BB", "UTG", "LJ", "HJ", "CO", "BTN"]
@@ -15,7 +15,6 @@ POSITION_LEFT_PLAYERS = {"UTG": 7, "LJ": 6, "HJ": 5, "CO": 4, "BTN": 3, "SB": 2,
 
 @st.cache_data
 def load_ranges_from_csv():
-    # ユーザー提供の範囲定義に完全準拠
     base = {}
     for h in ["AA","AKs","AKo","KK","QQ"]: base[h] = "紺"
     for h in ["JJ","TT","99","AQs","AJs","ATs","KQs","AQo"]: base[h] = "赤"
@@ -25,12 +24,6 @@ def load_ranges_from_csv():
     return base
 
 hand_to_color = load_ranges_from_csv()
-
-# 全52枚のカードリスト生成
-def get_full_deck():
-    ranks = "23456789TJQKA"
-    suits = "shcd"
-    return [r + s for r in ranks for s in suits]
 
 def get_open_min_color(pos):
     left_players = POSITION_LEFT_PLAYERS.get(pos, 0)
@@ -78,8 +71,8 @@ def get_range_combos(target_colors, hand_to_color_map):
             all_combos.extend(convert_to_concrete_cards(hand))
     return all_combos
 
-# --- 2. モンテカルロエンジン ---
-def run_simulation(hero_combos, villain_combos, board, iterations=400):
+# --- 2. モンテカルロ＆GTO計算エンジン ---
+def run_simulation(hero_combos, villain_combos, board, iterations=300):
     if not hero_combos or not villain_combos: return 0.5
     hero_wins, villain_wins, ties, actual_iterations = 0, 0, 0, 0
     deck_base = [eval7.Card(f"{r}{s}") for r in "23456789TJQKA" for s in "shcd"]
@@ -105,7 +98,6 @@ def run_simulation(hero_combos, villain_combos, board, iterations=400):
         else: ties += 1
     return (hero_wins + 0.5 * ties) / actual_iterations if actual_iterations > 0 else 0.5
 
-# --- 3. 動的数理GTO分析ロジック ---
 def analyze_board_texture(board_cards):
     ranks = [c[0] for c in board_cards]
     suits = [c[1] for c in board_cards]
@@ -137,16 +129,14 @@ def calculate_range_composition(combos, board_cards):
     total = len(combos) if combos else 1
     return {"nuts": nuts/total, "top_pair": top_pair/total, "air": air/total}
 
-def calculate_gto_frequencies_v6(hero_hand_str, villain_hand_str, hero_colors, villain_colors, board_cards, street):
+def calculate_gto_frequencies_v61(hero_hand_str, hero_colors, villain_colors, board_cards, street):
     h_range = get_range_combos(hero_colors, hand_to_color)
     v_range = get_range_combos(villain_colors, hand_to_color)
     board_obj = [eval7.Card(c) for c in board_cards]
     
     h_hand = [hero_hand_str[:2], hero_hand_str[2:]]
-    v_hand = [villain_hand_str[:2], villain_hand_str[2:]]
-    
-    hand_eq = run_simulation([h_hand], v_range, board_obj, iterations=500)
-    range_eq = run_simulation(h_range, v_range, board_obj, iterations=500)
+    hand_eq = run_simulation([h_hand], v_range, board_obj, iterations=400)
+    range_eq = run_simulation(h_range, v_range, board_obj, iterations=400)
     
     texture = analyze_board_texture(board_cards)
     h_comp = calculate_range_composition(h_range, board_cards)
@@ -154,15 +144,8 @@ def calculate_gto_frequencies_v6(hero_hand_str, villain_hand_str, hero_colors, v
     
     freq = {"bet_70": 0.0, "bet_33": 0.0, "check": 0.0}
     
-    if street in ["turn", "river"]:
-        if hand_eq >= 0.75: freq["bet_70"], freq["bet_33"], freq["check"] = 70.0, 10.0, 20.0
-        elif hand_eq >= 0.55: freq["bet_70"], freq["bet_33"], freq["check"] = 15.0, 55.0, 30.0
-        else: freq["bet_70"], freq["bet_33"], freq["check"] = 0.0, 10.0, 90.0
-        return freq, hand_eq, range_eq, texture, {"hero": h_comp, "villain": v_comp}
-
-    # フロップ動的決定数式
     if range_eq >= 0.54:
-        if texture["values"][0] <= 11: # UTG vs CO ($6s Tc 2s$ 等のミドルローボード)
+        if texture["values"][0] <= 11:
             freq["bet_33"] = round(85.0 * (1.0 - texture["dynamic_score"] * 0.1), 1)
             freq["bet_70"] = round(5.0 + (texture["dynamic_score"] * 10.0), 1)
         else:
@@ -181,80 +164,101 @@ def calculate_gto_frequencies_v6(hero_hand_str, villain_hand_str, hero_colors, v
     for k in freq: freq[k] = round((freq[k] / total) * 100.0, 1)
     return freq, hand_eq, range_eq, texture, {"hero": h_comp, "villain": v_comp}
 
-# --- 4. 画面制御 ---
+# --- 3. 画面制御メイン ---
 if "game_state" not in st.session_state: st.session_state.game_state = "setup"
 
 if st.session_state.game_state == "setup":
-    st.markdown("### 🔬 GTO戦略完全指定・数理検証シミュレーター")
+    st.markdown("### 🧬 GTOポジション指定＆数理検証シミュレーター")
     
-    col_p1, col_p2 = st.columns(2)
-    with col_p1: hero_pos = st.selectbox("あなたのポジション (Hero)", PREFLOP_ORDER, index=0)  # UTG
-    with col_p2: villain_pos = st.selectbox("相手のポジション (Villain)", PREFLOP_ORDER, index=3)  # CO
-    
-    situation = st.selectbox("プリフロップの攻防", ["Heroがオープン、Villainがコール"])
-    
-    # カードの重複を完全に排除するためのUI制御
-    deck_pool = get_full_deck()
-    
-    st.markdown("#### 🎴 カードの手動確定選択")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: h_c1 = st.selectbox("Heroカード1", deck_pool, index=51) # Ks
-    with c2: h_c2 = st.selectbox("Heroカード2", [c for c in deck_pool if c != h_c1], index=49) # Kc
-    
-    used_hero = [h_c1, h_c2]
-    with c3: v_c1 = st.selectbox("Villainカード1", [c for c in deck_pool if c not in used_hero], index=38) # Js等
-    with c4: v_c2 = st.selectbox("Villainカード2", [c for c in deck_pool if c not in used_hero and c != v_c1], index=36) # Ts等
-    
-    used_hands = [h_c1, h_c2, v_c1, v_c2]
-    st.markdown("#### 🃏 フロップボード3枚の確定選択")
-    b1, b2, b3 = st.columns(3)
-    with b1: board_1 = st.selectbox("ボード1", [c for c in deck_pool if c not in used_hands], index=16) # 6s
-    with b2: board_2 = st.selectbox("ボード2", [c for c in deck_pool if c not in used_hands and c != board_1], index=33) # Tc
-    with b3: board_3 = st.selectbox("ボード3", [c for c in deck_pool if c not in used_hands and c != board_1 and c != board_2], index=0) # 2s
+    hero_pos = st.selectbox("あなたのポジション (Hero)", PREFLOP_ORDER, index=0) # デフォルトUTG
+    villain_pos_option = st.selectbox("相手のポジション (Villain)", ["ランダムに決定"] + PREFLOP_ORDER)
+    situation = st.selectbox("シチュエーション", ["自分がオープンレイズし、相手がコールした状況"])
 
-    if st.button("このシチュエーションで数理GTO計算を実行 🚀", use_container_width=True):
-        opener, defender = (hero_pos, villain_pos) if "Heroがオープン" in situation else (villain_pos, hero_pos)
+    if st.button("このポジション設定でシミュレーションを開始 🚀", use_container_width=True):
+        # 相手がランダムの場合の処理
+        if villain_pos_option == "ランダムに決定":
+            available_p = [p for p in PREFLOP_ORDER if p != hero_pos]
+            chosen_villain = random.choice(available_p)
+        else:
+            chosen_villain = villain_pos_option
+
+        # プリフロップレンジの特定
+        opener, defender = hero_pos, chosen_villain
         op_colors, call_colors = get_preflop_ranges(opener, defender)
-        hero_colors, villain_colors = (op_colors, call_colors) if hero_pos == opener else (call_colors, op_colors)
         
+        # 今回は「自分がオープンレイズ」固定のシナリオ
+        hero_colors, villain_colors = op_colors, call_colors
+        
+        # 内部でのハンド・ボード確定（重複排除ロジック）
+        hero_valid = [h for h, c in hand_to_color.items() if c in hero_colors] or ["AA", "KK"]
+        chosen_h = random.choice(hero_valid)
+        hero_pair = random.choice(convert_to_concrete_cards(chosen_h))
+        
+        villain_valid = [h for h, c in hand_to_color.items() if c in villain_colors] or ["QQ", "JJ"]
+        v_combos = []
+        for f in villain_valid: v_combos.extend(convert_to_concrete_cards(f))
+        v_combos_clean = [c for c in v_combos if c[0] not in hero_pair and c[1] not in hero_pair] or [["As", "Ah"]]
+        villain_pair = random.choice(v_combos_clean)
+
+        # デッキからフロップボード3枚を構築 ($6s Tc 2s$ 等をランダムプールから安全に排出)
+        deck_pool = [f"{r}{s}" for r in "23456789TJQKA" for s in "shcd" if f"{r}{s}" not in hero_pair and f"{r}{s}" not in villain_pair]
+        random.shuffle(deck_pool)
+        
+        # 特定検証用のデフォルト（プールに残っていれば優先配置、なければランダム）
+        preferred_board = ["6s", "Tc", "2s"]
+        board_fixed = []
+        for pb in preferred_board:
+            if pb in deck_pool:
+                board_fixed.append(pb)
+                deck_pool.remove(pb)
+        while len(board_fixed) < 3:
+            board_fixed.append(deck_pool.pop())
+            
+        # セッションへの一括書き込み（State破綻の完全防止）
         st.session_state.game_data = {
-            "hero_pos": hero_pos, "villain_pos": villain_pos,
-            "hero_hand": f"{h_c1}{h_c2}", "villain_hand": f"{v_c1}{v_c2}",
+            "hero_pos": hero_pos, "villain_pos": chosen_villain,
+            "hero_hand": f"{hero_pair[0]}{hero_pair[1]}",
+            "villain_hand": f"{villain_pair[0]}{villain_pair[1]}",
             "hero_colors": hero_colors, "villain_colors": villain_colors,
-            "board": [board_1, board_2, board_3], "pot": 6.0, "current_street": "flop"
+            "board": board_fixed, "current_street": "flop",
+            "hero_color_name": hand_to_color.get(chosen_h, "紺")
         }
         st.session_state.game_state = "quiz_loop"
         st.rerun()
 
 elif st.session_state.game_state == "quiz_loop":
+    # データの安全なアンパック
     data = st.session_state.game_data
     street = data["current_street"]
-    hero_oop = POSTFLOP_ORDER.index(data["hero_pos"]) < POSTFLOP_ORDER.index(data["villain_pos"])
     
-    # 状態のロック計算（クラッシュ防止・タイポ修正）
-    freqs, hand_eq, range_eq, tex, comps = calculate_gto_frequencies_v6(
-        data["hero_hand"], data["villain_hand"], data["hero_colors"], data["villain_colors"], data["board"], street
+    # リアルタイムGTO数理解析マトリクスの計算
+    freqs, hand_eq, range_eq, tex, comps = calculate_gto_frequencies_v61(
+        data["hero_hand"], data["hero_colors"], data["villain_colors"], data["board"], street
     )
     
-    st.markdown(f"### ⚔️ 数理GTO解析結果 ({street.upper()}フェーズ)")
+    st.markdown(f"### ⚔️ 数理GTO解析画面 ({street.upper()}フェーズ)")
+    st.markdown(f"**📢 ポジション構成**: あなた (**{data['hero_pos']}**) vs 相手 (**{data['villain_pos']}**)")
     
+    # ボード表示
     b_html = "".join([f"<span style='font-size:28px; font-weight:bold; background-color:#111; padding:5px 12px; border-radius:5px; margin-right:8px; border:1px solid #444; color:#fff;'>{c}</span>" for c in data["board"]])
     st.markdown(f"ボード: {b_html}", unsafe_allow_html=True)
-    st.markdown(f"**😇 あなた ({data['hero_pos']})**: `{data['hero_hand']}` | **🤖 相手 ({data['villain_pos']})**: `{data['villain_hand']}`")
+    st.markdown(f"**😇 あなたのハンド**: `{data['hero_hand']}` (割り当てレンジ色: **{data['hero_color_name']}**)")
     
+    # メトリック表示
     c_eq1, c_eq2 = st.columns(2)
     with c_eq1: st.metric(label="📈 あなたのハンド単体勝率 (Equity)", value=f"{hand_eq*100:.1f}%")
     with c_eq2: st.metric(label="📊 あなたのレンジ全体勝率 (Range Equity)", value=f"{range_eq*100:.1f}%")
 
+    # 数理分析ログ
     st.markdown("### 📊 ソルバー数理分析ログ")
     c_tex, c_comp = st.columns(2)
     with c_tex:
         st.markdown("#### 🃏 ボードテクスチャ構造スコア")
         st.write(f"- **最高ハイカード**: {tex['high_card']}")
-        st.write(f"- **フラッシュドロー危険度**: {'⚠️ あり (高ダイナミック)' if tex['flush_draw'] else '❌ なし'}")
-        st.write(f"- **ボードの流動性 (Dynamic Score)**: `{tex['dynamic_score']:.2f}` / 1.00")
+        st.write(f"- **フラッシュドローの有無**: {'⚠️ あり' if tex['flush_draw'] else '❌ なし'}")
+        st.write(f"- **ボード流動性スコア (Dynamic Score)**: `{tex['dynamic_score']:.2f}` / 1.00")
     with c_comp:
-        st.markdown("#### 📈 レンジ内役構成比率 (お互いの色の全コンボ評価)")
+        st.markdown("#### 📈 双方のレンジ内役構成比率")
         df_comp = pd.DataFrame({
             "あなたのレンジ": [f"{comps['hero']['nuts']*100:.1f}%", f"{comps['hero']['top_pair']*100:.1f}%", f"{comps['hero']['air']*100:.1f}%"],
             "相手のレンジ": [f"{comps['villain']['nuts']*100:.1f}%", f"{comps['villain']['top_pair']*100:.1f}%", f"{comps['villain']['air']*100:.1f}%"]
@@ -262,16 +266,15 @@ elif st.session_state.game_state == "quiz_loop":
         st.table(df_comp)
 
     st.markdown("---")
-    st.markdown("### 🎯 GTOソルバー推奨頻度")
-    st.info(f"💡 **数理最適解**: 33%ベット(スモールCB)が **{freqs['bet_33']}%** の圧倒的高頻度として算出されました。")
+    st.markdown("### 🎯 GTOソルバー算出周波数")
     
-    st.write(f"🟢 **33%ベット（スモール）**: `{freqs['bet_33']}%`")
-    st.write(f"🔴 **70%ベット（ラージ）**: `{freqs['bet_70']}%`")
-    st.write(f"⚪ **チェック**: `{freqs['check']}%`")
+    st.write(f"🟢 **33%ベット（スモールサイズ推奨頻度）**: `{freqs['bet_33']}%`")
+    st.write(f"🔴 **70%ベット（ラージサイズ推奨頻度）**: `{freqs['bet_70']}%`")
+    st.write(f"⚪ **チェック頻度**: `{freqs['check']}%`")
     
-    st.markdown("### 👁️ ハンドリーディングの推移")
-    st.write(f"相手のレンジの **{comps['villain']['air']*100:.1f}%** は現時点で何一つ当たっていません。ここで33%を打つことで、相手のゴミ手をフォールドさせずにマージナルなコールを誘発させ、EVを最大化します。")
+    st.markdown("### 👁️ ハンドリーディングロジック解説")
+    st.info(f"このボードテクスチャにおいて、相手のディフェンスレンジの **{comps['villain']['air']*100:.1f}%** は完全に滑っている状態です。高頻度のスモールCB（33%）を放つことで、相手の未完成ハンドを逃がさずにキャッチし、レンジ全体から最大効率でEVを回収します。")
 
-    if st.button("条件選択に戻る 🔄", use_container_width=True):
+    if st.button("ポジション選択に戻る 🔄", use_container_width=True):
         st.session_state.game_state = "setup"
         st.rerun()
